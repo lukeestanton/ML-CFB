@@ -24,7 +24,8 @@ python scripts/build_dataset.py --start 2018 --end 2025
 ```
 
 Artifacts:
-- Raw: `data/raw/games_YYYY.csv`, `data/raw/lines_YYYY.csv`
+- Raw: `data/raw/games_YYYY.csv`, `data/raw/lines_YYYY.csv`,
+  `data/raw/team_stats_YYYY.csv`, `data/raw/advanced_team_stats_YYYY.csv`
 - Processed: `data/processed/totals_dataset.csv`
 
 ### What gets built
@@ -34,6 +35,9 @@ Processed dataset columns:
 - Market: `closing_total`, `provider`
 - Labels: `over_result` (1=Over, 0=Under, NaN=Push), `push` (bool)
 - Residual: `actual_total_minus_total`
+- Form features: 3-game rolling averages for each side covering points scored/allowed,
+  score margin, time of possession, pace (plays per minute of possession), yards per play,
+  offensive success and explosiveness rates, turnovers, penalties, and penalty yards
 
 `closing_total` is selected from the preferred provider for each game (William Hill, DraftKings, ESPN Bet, etc.). Only regular season games with betting lines are included.
 
