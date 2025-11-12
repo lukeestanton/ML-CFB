@@ -16,7 +16,7 @@ from ml_cfb.config import load_settings
 from ml_cfb.ingest.games import fetch_games_for_season
 from ml_cfb.ingest.lines import fetch_lines_for_season
 from ml_cfb.io.storage import write_csv
-from ml_cfb.transform.parsing import build_totals_dataset
+from ml_cfb.transform.parsing import build_totals_dataset, build_training_dataset
 
 
 def _season_iter(range_tuple: Tuple[int, int]) -> List[int]:
@@ -65,11 +65,17 @@ def main(start: int | None, end: int | None) -> None:
     games_all = pd.concat(all_games, ignore_index=True)
     lines_all = pd.concat(all_lines, ignore_index=True) if all_lines else pd.DataFrame()
 
+    # Build totals dataset (for backward compatibility)
     totals_df = build_totals_dataset(games_all, lines_all)
-
     out_path = settings.paths.data_processed / "totals_dataset.csv"
     write_csv(totals_df, out_path)
     click.echo(f"Wrote processed dataset to {out_path}")
+
+    # Build training dataset
+    training_df = build_training_dataset(games_all, lines_all)
+    training_path = settings.paths.data_processed / "training_dataset.csv"
+    write_csv(training_df, training_path)
+    click.echo(f"Wrote training dataset to {training_path}")
 
 
 if __name__ == "__main__":
