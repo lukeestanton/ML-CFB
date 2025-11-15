@@ -299,6 +299,11 @@ class CFBBettingModel:
         for ev_thresh in [0.01, 0.03, 0.05, 0.07, 0.10]:
             profits: list[float] = []
             bets_placed: list[str] = []
+            
+            over_bets = 0
+            under_bets = 0
+            over_wins = 0
+            under_wins = 0
 
             for idx, prob_over in enumerate(y_pred_proba):
                 ev_over = (prob_over * (bet_amount * (odds_payout - 1))) - (
@@ -317,11 +322,17 @@ class CFBBettingModel:
                         bet_amount * (odds_payout - 1) if actual == 1 else -bet_amount
                     )
                     bet_made = "Over"
+                    over_bets += 1
+                    if profit > 0:
+                        over_wins += 1
                 elif ev_under > (bet_amount * ev_thresh):
                     profit = (
                         bet_amount * (odds_payout - 1) if actual == 0 else -bet_amount
                     )
                     bet_made = "Under"
+                    under_bets += 1
+                    if profit > 0:
+                        under_wins += 1
 
                 if bet_made:
                     profits.append(profit)
@@ -339,6 +350,15 @@ class CFBBettingModel:
             print(
                 f"  Bets: {len(bets_placed)} | Win Rate: {win_rate:.2f}% | "
                 f"ROI: {roi:.2f}% | P/L: ${total_profit:.2f}"
+            )
+            
+            over_win_rate = (over_wins / over_bets * 100) if over_bets > 0 else 0
+            under_win_rate = (under_wins / under_bets * 100) if under_bets > 0 else 0
+            print(
+                f"    Overs:  {over_bets} bets ({over_win_rate:.2f}% win rate)"
+            )
+            print(
+                f"    Unders: {under_bets} bets ({under_win_rate:.2f}% win rate)"
             )
 
     def plot(
