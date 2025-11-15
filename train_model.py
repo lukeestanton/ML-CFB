@@ -17,6 +17,7 @@ import seaborn as sns
 import xgboost as xgb
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
+from sklearn.model_selection import TimeSeriesSplit
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -33,14 +34,11 @@ class CFBBettingModel:
 
         df["total_points"] = df["home_points"] + df["away_points"]
 
-        # Drop pushes
         push_mask = df["total_points"] == df["ou_line"]
         df = df.loc[~push_mask].copy()
 
-        # Binary target: 1 = game went over the total, 0 = under
         df["went_over"] = (df["total_points"] > df["ou_line"]).astype(int)
 
-        # Sort chronologically
         df = df.sort_values("date").reset_index(drop=True)
         self.data = df
 
@@ -48,65 +46,91 @@ class CFBBettingModel:
         if self.data is None:
             raise ValueError("Data must be loaded before creating features.")
 
+        adv_stat_cols = [
+            "home_ppa_offense", "home_success_rate", "home_ppa_defense",
+            "away_ppa_offense", "away_success_rate", "away_ppa_defense",
+        ]
+        cols_to_fill = [col for col in adv_stat_cols if col in self.data.columns]
+        if cols_to_fill:
+            print(f"--- Imputing NaNs for advanced stats: {cols_to_fill} ---")
+            self.data[cols_to_fill] = self.data[cols_to_fill].fillna(0.0)
+        else:
+            print("--- No advanced stats columns found in training_dataset.csv ---")
+            
+        df = self.data
         feature_rows: list[dict[str, float]] = []
 
-        for _, game in self.data.iterrows():
+        for _, game in df.iterrows():
             home_team = game["home_team"]
             away_team = game["away_team"]
             game_date = game["date"]
 
-            # Last 5 games of each team before this game
-            home_history = self.data[
+            home_history = df[
                 (
-                    (self.data["home_team"] == home_team)
-                    | (self.data["away_team"] == home_team)
+                    (df["home_team"] == home_team)
+                    | (df["away_team"] == home_team)
                 )
-                & (self.data["date"] < game_date)
+                & (df["date"] < game_date)
             ].tail(5)
 
-            away_history = self.data[
+            away_history = df[
                 (
-                    (self.data["home_team"] == away_team)
-                    | (self.data["away_team"] == away_team)
+                    (df["home_team"] == away_team)
+                    | (df["away_team"] == away_team)
                 )
-                & (self.data["date"] < game_date)
+                & (df["date"] < game_date)
             ].tail(5)
 
             if len(home_history) < 2 or len(away_history) < 2:
                 continue
 
-            # Home team rolling stats
             hp_for, hp_against, h_totals = [], [], []
             h_residuals, h_over_flags = [], []
+            h_ppa_off, h_success_rate, h_ppa_def = [], [], []
+            
             for _, hg in home_history.iterrows():
                 if hg["home_team"] == home_team:
                     pf, pa = hg["home_points"], hg["away_points"]
+                    if cols_to_fill:
+                        h_ppa_off.append(hg["home_ppa_offense"])
+                        h_success_rate.append(hg["home_success_rate"])
+                        h_ppa_def.append(hg["home_ppa_defense"])
                 else:
                     pf, pa = hg["away_points"], hg["home_points"]
+                    if cols_to_fill:
+                        h_ppa_off.append(hg["away_ppa_offense"])
+                        h_success_rate.append(hg["away_success_rate"])
+                        h_ppa_def.append(hg["away_ppa_defense"])
 
                 total = hg["total_points"]
-
                 hp_for.append(pf)
                 hp_against.append(pa)
                 h_totals.append(total)
 
-                # Market residual
                 if pd.notna(hg["ou_line"]):
                     residual = float(total - hg["ou_line"])
                     h_residuals.append(residual)
                     h_over_flags.append(1.0 if total > hg["ou_line"] else 0.0)
 
-            # Away team rolling stats
             ap_for, ap_against, a_totals = [], [], []
             a_residuals, a_over_flags = [], []
+            a_ppa_off, a_success_rate, a_ppa_def = [], [], []
+
             for _, ag in away_history.iterrows():
                 if ag["home_team"] == away_team:
                     pf, pa = ag["home_points"], ag["away_points"]
+                    if cols_to_fill:
+                        a_ppa_off.append(ag["home_ppa_offense"])
+                        a_success_rate.append(ag["home_success_rate"])
+                        a_ppa_def.append(ag["home_ppa_defense"])
                 else:
                     pf, pa = ag["away_points"], ag["home_points"]
-
+                    if cols_to_fill:
+                        a_ppa_off.append(ag["away_ppa_offense"])
+                        a_success_rate.append(ag["away_success_rate"])
+                        a_ppa_def.append(ag["away_ppa_defense"])
+                        
                 total = ag["total_points"]
-
                 ap_for.append(pf)
                 ap_against.append(pa)
                 a_totals.append(total)
@@ -116,40 +140,44 @@ class CFBBettingModel:
                     a_residuals.append(residual)
                     a_over_flags.append(1.0 if total > ag["ou_line"] else 0.0)
 
-            # If don't have any residual history skip game
             if len(h_residuals) == 0 or len(a_residuals) == 0:
                 continue
 
-            # Aggregate stats for home
-            home_avg_pts = float(np.mean(hp_for))
-            home_avg_pts_allowed = float(np.mean(hp_against))
-            home_avg_total = float(np.mean(h_totals))
-            home_std_total = float(np.std(h_totals))
-            home_avg_residual_total = float(np.mean(h_residuals))
-            home_over_rate_last5 = float(np.mean(h_over_flags))
+            home_avg_pts = float(np.nanmean(hp_for))
+            home_avg_pts_allowed = float(np.nanmean(hp_against))
+            home_avg_total = float(np.nanmean(h_totals))
+            home_std_total = float(np.nanstd(h_totals))
+            home_avg_residual_total = float(np.nanmean(h_residuals))
+            home_over_rate_last5 = float(np.nanmean(h_over_flags))
+            home_avg_ppa_off = float(np.nanmean(h_ppa_off))
+            home_avg_success_rate = float(np.nanmean(h_success_rate))
+            home_avg_ppa_def = float(np.nanmean(h_ppa_def))
 
-            # Aggregate stats for away
-            away_avg_pts = float(np.mean(ap_for))
-            away_avg_pts_allowed = float(np.mean(ap_against))
-            away_avg_total = float(np.mean(a_totals))
-            away_std_total = float(np.std(a_totals))
-            away_avg_residual_total = float(np.mean(a_residuals))
-            away_over_rate_last5 = float(np.mean(a_over_flags))
+            away_avg_pts = float(np.nanmean(ap_for))
+            away_avg_pts_allowed = float(np.nanmean(ap_against))
+            away_avg_total = float(np.nanmean(a_totals))
+            away_std_total = float(np.nanstd(a_totals))
+            away_avg_residual_total = float(np.nanmean(a_residuals))
+            away_over_rate_last5 = float(np.nanmean(a_over_flags))
+            away_avg_ppa_off = float(np.nanmean(a_ppa_off))
+            away_avg_success_rate = float(np.nanmean(a_success_rate))
+            away_avg_ppa_def = float(np.nanmean(a_ppa_def))
 
             combined_avg_total = float((home_avg_total + away_avg_total) / 2.0)
 
-            # Matchup-style features
             diff_avg_residual_total = home_avg_residual_total - away_avg_residual_total
             diff_over_rate_last5 = home_over_rate_last5 - away_over_rate_last5
             off_def_mismatch_home_off_away_def = home_avg_pts - away_avg_pts_allowed
             off_def_mismatch_away_off_home_def = away_avg_pts - home_avg_pts_allowed
-
+            
+            mismatch_home_off_vs_away_def_ppa = home_avg_ppa_off - away_avg_ppa_def
+            mismatch_away_off_vs_home_def_ppa = away_avg_ppa_off - home_avg_ppa_def
+            mismatch_success_rate = home_avg_success_rate - away_avg_success_rate
+            
             feature_rows.append(
                 {
                     "ou_line": float(game["ou_line"]),
                     "spread": float(game.get("spread", 0.0)),
-
-                    # Basic rolling scoring stats
                     "home_avg_pts": home_avg_pts,
                     "home_avg_pts_allowed": home_avg_pts_allowed,
                     "home_avg_total": home_avg_total,
@@ -159,27 +187,33 @@ class CFBBettingModel:
                     "away_avg_total": away_avg_total,
                     "away_std_total": away_std_total,
                     "combined_avg_total": combined_avg_total,
-
-                    # Market residual features
                     "home_avg_residual_total": home_avg_residual_total,
                     "home_over_rate_last5": home_over_rate_last5,
                     "away_avg_residual_total": away_avg_residual_total,
                     "away_over_rate_last5": away_over_rate_last5,
                     "diff_avg_residual_total": diff_avg_residual_total,
                     "diff_over_rate_last5": diff_over_rate_last5,
-
-                    # Offense vs defense mismatch features
                     "off_def_mismatch_home_off_away_def": off_def_mismatch_home_off_away_def,
                     "off_def_mismatch_away_off_home_def": off_def_mismatch_away_off_home_def,
 
-                    # Target
+                    "home_avg_ppa_off": home_avg_ppa_off,
+                    "home_avg_success_rate": home_avg_success_rate,
+                    "home_avg_ppa_def": home_avg_ppa_def,
+                    "away_avg_ppa_off": away_avg_ppa_off,
+                    "away_avg_success_rate": away_avg_success_rate,
+                    "away_avg_ppa_def": away_avg_ppa_def,
+                    "mismatch_home_off_vs_away_def_ppa": mismatch_home_off_vs_away_def_ppa,
+                    "mismatch_away_off_vs_home_def_ppa": mismatch_away_off_vs_home_def_ppa,
+                    "mismatch_success_rate": mismatch_success_rate,
+
                     "went_over": int(game["went_over"]),
                 }
             )
 
         features = pd.DataFrame(feature_rows)
+        
+        features = features.fillna(0.0)
 
-        # "Pace"
         features["pace_factor"] = features["combined_avg_total"] - features["ou_line"]
 
         self.features = features
@@ -191,7 +225,6 @@ class CFBBettingModel:
         X = self.features.drop(columns=["went_over"])
         y = self.features["went_over"]
 
-        # Time-based split
         split_idx = int(len(X) * 0.8)
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
@@ -223,7 +256,6 @@ class CFBBettingModel:
         print(f"  AUC: {roc_auc_score(y_test_np, y_pred_proba_raw):.4f}")
         print(f"  Brier Score: {brier_score_loss(y_test_np, y_pred_proba_raw):.4f}")
 
-        # Calibrated model (isotonic)
         cal_base_model = xgb.XGBClassifier(
             n_estimators=100,
             max_depth=5,
@@ -238,11 +270,13 @@ class CFBBettingModel:
 
         if not hasattr(cal_base_model, "_estimator_type"):
             cal_base_model._estimator_type = "classifier"
+        
+        tscv = TimeSeriesSplit(n_splits=3)
 
         calibrated_model = CalibratedClassifierCV(
             cal_base_model,
             method="isotonic",
-            cv=3,
+            cv=tscv,
         )
         calibrated_model.fit(X_train_np, y_train_np)
         self.calibrated_model = calibrated_model
@@ -260,7 +294,7 @@ class CFBBettingModel:
         self, X_test: pd.DataFrame, y_test: pd.Series, y_pred_proba: np.ndarray
     ) -> None:
         bet_amount = 10
-        odds_payout = 1.909  # -110 odds equivalent
+        odds_payout = 1.909
 
         for ev_thresh in [0.01, 0.03, 0.05, 0.07, 0.10]:
             profits: list[float] = []
@@ -315,12 +349,10 @@ class CFBBettingModel:
 
         fig, axes = plt.subplots(2, 2, figsize=(14, 12))
 
-        # Distribution of predicted probabilities
         sns.histplot(y_pred_proba, bins=25, ax=axes[0, 0], kde=True).set_title(
             "Probability Distribution"
         )
 
-        # Feature importances from the base (uncalibrated) XGBoost model
         feat_imp = pd.DataFrame(
             {
                 "feature": X_test.columns,
@@ -335,7 +367,6 @@ class CFBBettingModel:
         )
         axes[0, 1].set_title("Top 10 Features")
 
-        # Calibration plot
         frac_pos, mean_pred = calibration_curve(y_test, y_pred_proba, n_bins=10)
         axes[1, 0].plot(mean_pred, frac_pos, marker="o", label="Model")
         axes[1, 0].plot(
@@ -346,7 +377,6 @@ class CFBBettingModel:
         axes[1, 0].set_title("Calibration Plot")
         axes[1, 0].legend()
 
-        # Text panel
         axes[1, 1].axis("off")
         axes[1, 1].text(
             0.5,

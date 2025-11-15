@@ -33,7 +33,7 @@ def load_settings() -> Settings:
     data_processed.mkdir(parents=True, exist_ok=True)
 
     api_key = os.getenv("CFBD_API_KEY", "").strip()
-    start = int(os.getenv("CFBD_START_SEASON", "2018"))
+    start = int(os.getenv("CFBD_START_SEASON", "2019"))
     end = int(os.getenv("CFBD_END_SEASON", "2025"))
 
     return Settings(

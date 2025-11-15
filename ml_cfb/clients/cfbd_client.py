@@ -1,4 +1,6 @@
+# clients/cfbd_client.py
 from __future__ import annotations
+
 import re
 from typing import Any, Dict, List, Optional
 import requests
@@ -81,6 +83,29 @@ class BettingAPI:
         
         return self.client._get("/lines", params=params)
 
+class StatsAPI:
+    def __init__(self, client: CFBDClient):
+        self.client = client
+
+    def get_advanced_game_stats(
+        self,
+        year: Optional[int] = None,
+        week: Optional[int] = None,
+        season_type: Optional[str] = "regular",
+        exclude_garbage_time: Optional[bool] = False,
+    ) -> List[Dict]:
+        params = {}
+        if year is not None:
+            params["year"] = year
+        if week is not None:
+            params["week"] = week
+        if season_type is not None:
+            params["seasonType"] = season_type
+        if exclude_garbage_time is not None:
+            params["excludeGarbageTime"] = str(exclude_garbage_time).lower()
+
+        return self.client._get("/stats/game/advanced", params=params)
+
 def build_cfbd_client(api_key: str) -> CFBDClient:
     return CFBDClient(api_key)
 
@@ -89,3 +114,6 @@ def get_games_api(client: CFBDClient) -> GamesAPI:
 
 def get_betting_api(client: CFBDClient) -> BettingAPI:
     return BettingAPI(client)
+
+def get_stats_api(client: CFBDClient) -> StatsAPI:
+    return StatsAPI(client)
