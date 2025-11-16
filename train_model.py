@@ -46,16 +46,21 @@ class CFBBettingModel:
         if self.data is None:
             raise ValueError("Data must be loaded before creating features.")
 
-        adv_stat_cols = [
+        cols_to_fill = [
             "home_ppa_offense", "home_success_rate", "home_ppa_defense",
             "away_ppa_offense", "away_success_rate", "away_ppa_defense",
+            "temperature", "wind_speed", "precipitation"
         ]
-        cols_to_fill = [col for col in adv_stat_cols if col in self.data.columns]
-        if cols_to_fill:
-            print(f"--- Imputing NaNs for advanced stats: {cols_to_fill} ---")
-            self.data[cols_to_fill] = self.data[cols_to_fill].fillna(0.0)
+        
+        if "is_dome" in self.data.columns:
+            self.data["is_dome"] = self.data["is_dome"].fillna(0).astype(int)
+        
+        cols_found = [col for col in cols_to_fill if col in self.data.columns]
+        if cols_found:
+            print(f"--- Imputing NaNs for: {cols_found} ---")
+            self.data[cols_found] = self.data[cols_found].fillna(0.0)
         else:
-            print("--- No advanced stats columns found in training_dataset.csv ---")
+            print("--- No advanced stats or weather columns found. ---")
             
         df = self.data
         feature_rows: list[dict[str, float]] = []
@@ -91,25 +96,19 @@ class CFBBettingModel:
             for _, hg in home_history.iterrows():
                 if hg["home_team"] == home_team:
                     pf, pa = hg["home_points"], hg["away_points"]
-                    if cols_to_fill:
+                    if "home_ppa_offense" in hg:
                         h_ppa_off.append(hg["home_ppa_offense"])
                         h_success_rate.append(hg["home_success_rate"])
                         h_ppa_def.append(hg["home_ppa_defense"])
                 else:
                     pf, pa = hg["away_points"], hg["home_points"]
-                    if cols_to_fill:
+                    if "away_ppa_offense" in hg:
                         h_ppa_off.append(hg["away_ppa_offense"])
                         h_success_rate.append(hg["away_success_rate"])
                         h_ppa_def.append(hg["away_ppa_defense"])
-
-                total = hg["total_points"]
-                hp_for.append(pf)
-                hp_against.append(pa)
-                h_totals.append(total)
-
+                total = hg["total_points"]; hp_for.append(pf); hp_against.append(pa); h_totals.append(total)
                 if pd.notna(hg["ou_line"]):
-                    residual = float(total - hg["ou_line"])
-                    h_residuals.append(residual)
+                    residual = float(total - hg["ou_line"]); h_residuals.append(residual)
                     h_over_flags.append(1.0 if total > hg["ou_line"] else 0.0)
 
             ap_for, ap_against, a_totals = [], [], []
@@ -119,57 +118,39 @@ class CFBBettingModel:
             for _, ag in away_history.iterrows():
                 if ag["home_team"] == away_team:
                     pf, pa = ag["home_points"], ag["away_points"]
-                    if cols_to_fill:
+                    if "home_ppa_offense" in ag:
                         a_ppa_off.append(ag["home_ppa_offense"])
                         a_success_rate.append(ag["home_success_rate"])
                         a_ppa_def.append(ag["home_ppa_defense"])
                 else:
                     pf, pa = ag["away_points"], ag["home_points"]
-                    if cols_to_fill:
+                    if "away_ppa_offense" in ag:
                         a_ppa_off.append(ag["away_ppa_offense"])
                         a_success_rate.append(ag["away_success_rate"])
                         a_ppa_def.append(ag["away_ppa_defense"])
-                        
-                total = ag["total_points"]
-                ap_for.append(pf)
-                ap_against.append(pa)
-                a_totals.append(total)
-
+                total = ag["total_points"]; ap_for.append(pf); ap_against.append(pa); a_totals.append(total)
                 if pd.notna(ag["ou_line"]):
-                    residual = float(total - ag["ou_line"])
-                    a_residuals.append(residual)
+                    residual = float(total - ag["ou_line"]); a_residuals.append(residual)
                     a_over_flags.append(1.0 if total > ag["ou_line"] else 0.0)
 
             if len(h_residuals) == 0 or len(a_residuals) == 0:
                 continue
 
-            home_avg_pts = float(np.nanmean(hp_for))
-            home_avg_pts_allowed = float(np.nanmean(hp_against))
-            home_avg_total = float(np.nanmean(h_totals))
-            home_std_total = float(np.nanstd(h_totals))
-            home_avg_residual_total = float(np.nanmean(h_residuals))
-            home_over_rate_last5 = float(np.nanmean(h_over_flags))
-            home_avg_ppa_off = float(np.nanmean(h_ppa_off))
-            home_avg_success_rate = float(np.nanmean(h_success_rate))
+            home_avg_pts = float(np.nanmean(hp_for)); home_avg_pts_allowed = float(np.nanmean(hp_against))
+            home_avg_total = float(np.nanmean(h_totals)); home_std_total = float(np.nanstd(h_totals))
+            home_avg_residual_total = float(np.nanmean(h_residuals)); home_over_rate_last5 = float(np.nanmean(h_over_flags))
+            home_avg_ppa_off = float(np.nanmean(h_ppa_off)); home_avg_success_rate = float(np.nanmean(h_success_rate))
             home_avg_ppa_def = float(np.nanmean(h_ppa_def))
-
-            away_avg_pts = float(np.nanmean(ap_for))
-            away_avg_pts_allowed = float(np.nanmean(ap_against))
-            away_avg_total = float(np.nanmean(a_totals))
-            away_std_total = float(np.nanstd(a_totals))
-            away_avg_residual_total = float(np.nanmean(a_residuals))
-            away_over_rate_last5 = float(np.nanmean(a_over_flags))
-            away_avg_ppa_off = float(np.nanmean(a_ppa_off))
-            away_avg_success_rate = float(np.nanmean(a_success_rate))
+            away_avg_pts = float(np.nanmean(ap_for)); away_avg_pts_allowed = float(np.nanmean(ap_against))
+            away_avg_total = float(np.nanmean(a_totals)); away_std_total = float(np.nanstd(a_totals))
+            away_avg_residual_total = float(np.nanmean(a_residuals)); away_over_rate_last5 = float(np.nanmean(a_over_flags))
+            away_avg_ppa_off = float(np.nanmean(a_ppa_off)); away_avg_success_rate = float(np.nanmean(a_success_rate))
             away_avg_ppa_def = float(np.nanmean(a_ppa_def))
-
             combined_avg_total = float((home_avg_total + away_avg_total) / 2.0)
-
             diff_avg_residual_total = home_avg_residual_total - away_avg_residual_total
             diff_over_rate_last5 = home_over_rate_last5 - away_over_rate_last5
             off_def_mismatch_home_off_away_def = home_avg_pts - away_avg_pts_allowed
             off_def_mismatch_away_off_home_def = away_avg_pts - home_avg_pts_allowed
-            
             mismatch_home_off_vs_away_def_ppa = home_avg_ppa_off - away_avg_ppa_def
             mismatch_away_off_vs_home_def_ppa = away_avg_ppa_off - home_avg_ppa_def
             mismatch_success_rate = home_avg_success_rate - away_avg_success_rate
@@ -195,7 +176,6 @@ class CFBBettingModel:
                     "diff_over_rate_last5": diff_over_rate_last5,
                     "off_def_mismatch_home_off_away_def": off_def_mismatch_home_off_away_def,
                     "off_def_mismatch_away_off_home_def": off_def_mismatch_away_off_home_def,
-
                     "home_avg_ppa_off": home_avg_ppa_off,
                     "home_avg_success_rate": home_avg_success_rate,
                     "home_avg_ppa_def": home_avg_ppa_def,
@@ -205,13 +185,17 @@ class CFBBettingModel:
                     "mismatch_home_off_vs_away_def_ppa": mismatch_home_off_vs_away_def_ppa,
                     "mismatch_away_off_vs_home_def_ppa": mismatch_away_off_vs_home_def_ppa,
                     "mismatch_success_rate": mismatch_success_rate,
+                    
+                    "is_dome": float(game.get("is_dome", 0.0)),
+                    "temp": float(game.get("temperature", 0.0)),
+                    "wind": float(game.get("wind_speed", 0.0)),
+                    "precip": float(game.get("precipitation", 0.0)),
 
                     "went_over": int(game["went_over"]),
                 }
             )
 
         features = pd.DataFrame(feature_rows)
-        
         features = features.fillna(0.0)
 
         features["pace_factor"] = features["combined_avg_total"] - features["ou_line"]

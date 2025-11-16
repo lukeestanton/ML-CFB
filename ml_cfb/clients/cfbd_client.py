@@ -17,7 +17,8 @@ class Game:
         known_fields = {
             'id', 'season', 'week', 'season_type', 'start_date',
             'neutral_site', 'conference_game', 'home_team', 'away_team',
-            'home_points', 'away_points', 'venue'
+            'home_points', 'away_points', 'venue', 
+            'venue_id'
         }
         for field in known_fields:
             setattr(self, field, kwargs.get(field))
@@ -63,6 +64,22 @@ class GamesAPI:
         data = self.client._get("/games", params=params)
         return [Game(**_convert_keys_to_snake_case(item)) for item in data]
 
+    def get_weather(
+        self,
+        year: Optional[int] = None,
+        week: Optional[int] = None,
+        season_type: Optional[str] = "regular",
+    ) -> List[Dict]:
+        params = {}
+        if year is not None:
+            params["year"] = year
+        if week is not None:
+            params["week"] = week
+        if season_type is not None:
+            params["seasonType"] = season_type
+        
+        return self.client._get("/games/weather", params=params)
+
 class BettingAPI:
     def __init__(self, client: CFBDClient):
         self.client = client
@@ -103,7 +120,6 @@ class StatsAPI:
             params["seasonType"] = season_type
         if exclude_garbage_time is not None:
             params["excludeGarbageTime"] = str(exclude_garbage_time).lower()
-
         return self.client._get("/stats/game/advanced", params=params)
 
 def build_cfbd_client(api_key: str) -> CFBDClient:

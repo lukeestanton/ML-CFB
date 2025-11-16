@@ -2,7 +2,6 @@
 from __future__ import annotations
 import pandas as pd
 
-
 def _select_closing_totals(lines_df: pd.DataFrame) -> pd.DataFrame:
     if lines_df.empty:
         return pd.DataFrame(columns=["game_id", "closing_total", "closing_spread", "provider"])
@@ -45,7 +44,7 @@ def build_totals_dataset(games_df: pd.DataFrame, lines_df: pd.DataFrame) -> pd.D
         games_df[
             [ "game_id", "season", "week", "start_date", "neutral_site",
               "conference_game", "home_team", "away_team", "home_points",
-              "away_points", "actual_total",
+              "away_points", "actual_total", "venue_id"
             ]
         ]
         .merge(closers, on="game_id", how="inner")
@@ -70,11 +69,9 @@ def build_totals_dataset(games_df: pd.DataFrame, lines_df: pd.DataFrame) -> pd.D
 def build_training_dataset(
     games_df: pd.DataFrame,
     lines_df: pd.DataFrame,
-    advanced_stats_df: pd.DataFrame
+    advanced_stats_df: pd.DataFrame,
+    weather_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """
-    Build the modeling dataset for totals.
-    """
     if games_df.empty:
         return pd.DataFrame()
 
@@ -103,43 +100,41 @@ def build_training_dataset(
     if not advanced_stats_df.empty:
         if "season" in advanced_stats_df.columns:
             advanced_stats_df = advanced_stats_df.drop(columns="season")
-            
         advanced_stats_df["game_id"] = pd.to_numeric(advanced_stats_df["game_id"], errors="coerce").dropna().astype(int)
         advanced_stats_df = advanced_stats_df.drop_duplicates(subset=["game_id", "team"])
         
-        home_stats_df = advanced_stats_df.copy()
-        home_stats_df = home_stats_df.rename(columns={
-            "team": "home_team",
-            "off_ppa": "home_ppa_offense",
-            "off_success_rate": "home_success_rate",
-            "off_explosiveness": "home_explosiveness",
-            "def_ppa": "home_ppa_defense",
-            "def_success_rate": "home_def_success_rate", 
+        home_cols_to_rename = {
+            "team": "home_team", "off_ppa": "home_ppa_offense",
+            "off_success_rate": "home_success_rate", "off_explosiveness": "home_explosiveness",
+            "def_ppa": "home_ppa_defense", "def_success_rate": "home_def_success_rate", 
             "def_explosiveness": "home_def_explosiveness",
-        })
+        }
+        home_stats_df = advanced_stats_df.rename(columns=home_cols_to_rename)
+        home_stats_cols = ["game_id", "home_team"] + list(home_cols_to_rename.values())[1:]
+        home_stats_df = home_stats_df[home_stats_cols]
         
-        merged = merged.merge(
-            home_stats_df,
-            on=["game_id", "home_team"],
-            how="left"
-        )
+        merged = merged.merge(home_stats_df, on=["game_id", "home_team"], how="left")
         
-        away_stats_df = advanced_stats_df.copy()
-        away_stats_df = away_stats_df.rename(columns={
-            "team": "away_team",
-            "off_ppa": "away_ppa_offense",
-            "off_success_rate": "away_success_rate",
-            "off_explosiveness": "away_explosiveness",
-            "def_ppa": "away_ppa_defense",
-            "def_success_rate": "away_def_success_rate",
+        away_cols_to_rename = {
+            "team": "away_team", "off_ppa": "away_ppa_offense",
+            "off_success_rate": "away_success_rate", "off_explosiveness": "away_explosiveness",
+            "def_ppa": "away_ppa_defense", "def_success_rate": "away_def_success_rate",
             "def_explosiveness": "away_def_explosiveness",
-        })
+        }
+        away_stats_df = advanced_stats_df.rename(columns=away_cols_to_rename)
+        away_stats_cols = ["game_id", "away_team"] + list(away_cols_to_rename.values())[1:]
+        away_stats_df = away_stats_df[away_stats_cols]
+
+        merged = merged.merge(away_stats_df, on=["game_id", "away_team"], how="left")
+
+    if not weather_df.empty:
+        weather_df["game_id"] = pd.to_numeric(weather_df["game_id"], errors="coerce").dropna().astype(int)
+        weather_df = weather_df.drop_duplicates(subset=["game_id"])
         
-        merged = merged.merge(
-            away_stats_df,
-            on=["game_id", "away_team"],
-            how="left"
-        )
+        if "season" in weather_df.columns:
+            weather_df = weather_df.drop(columns="season")
+            
+        merged = merged.merge(weather_df, on="game_id", how="left")
 
     merged = merged[
         merged["closing_total"].notna()
@@ -171,6 +166,8 @@ def build_training_dataset(
         "home_ppa_defense", "home_def_success_rate", "home_def_explosiveness",
         "away_ppa_offense", "away_success_rate", "away_explosiveness",
         "away_ppa_defense", "away_def_success_rate", "away_def_explosiveness",
+        
+        "is_dome", "temperature", "wind_speed", "precipitation"
     ]
     
     final_columns = [col for col in required_columns if col in merged.columns]

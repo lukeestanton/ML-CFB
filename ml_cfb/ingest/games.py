@@ -1,3 +1,4 @@
+# ingest/games.py
 from __future__ import annotations
 from typing import List, Optional
 import pandas as pd
@@ -21,6 +22,7 @@ def _games_to_records(games: List) -> List[dict]:
                 "home_points": d.get("home_points"),
                 "away_points": d.get("away_points"),
                 "venue": d.get("venue"),
+                "venue_id": d.get("venue_id"),
             }
         )
     return records
@@ -45,5 +47,3 @@ def fetch_games_for_season(
     if not df.empty:
         df["actual_total"] = (df["home_points"].fillna(0) + df["away_points"].fillna(0)).astype("Int64")
     return df
-
-
