@@ -621,11 +621,6 @@ class CFBBettingModel:
 
         y_pred_proba_raw = base_model.predict_proba(X_test_np)[:, 1]
 
-        print("\n--- Uncalibrated Model Performance ---")
-        print(f"  Accuracy: {accuracy_score(y_test_np, base_model.predict(X_test_np)):.4f}")
-        print(f"  AUC: {roc_auc_score(y_test_np, y_pred_proba_raw):.4f}")
-        print(f"  Brier Score: {brier_score_loss(y_test_np, y_pred_proba_raw):.4f}")
-
         cal_base_model = xgb.XGBClassifier(
             n_estimators=100,
             max_depth=max_depth,
@@ -655,11 +650,6 @@ class CFBBettingModel:
         self.calibrated_model = calibrated_model
 
         y_pred_proba = calibrated_model.predict_proba(X_test_np)[:, 1]
-
-        print("\n--- Calibrated Model Performance ---")
-        print(f"  Accuracy: {accuracy_score(y_test_np, calibrated_model.predict(X_test_np)):.4f}")
-        print(f"  AUC: {roc_auc_score(y_test_np, y_pred_proba):.4f}")
-        print(f"  Brier Score: {brier_score_loss(y_test_np, y_pred_proba):.4f}")
 
         return X_test, y_test, y_pred_proba
 
@@ -882,7 +872,6 @@ def main() -> None:
     model.create_features()
     X_test, y_test, y_pred_proba = model.train()
     model.walk_forward_by_season()
-    model.evaluate_betting(X_test, y_test, y_pred_proba)
     model.plot(X_test, y_test, y_pred_proba)
 
 
