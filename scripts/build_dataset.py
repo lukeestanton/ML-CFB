@@ -17,7 +17,9 @@ from ml_cfb.config import load_settings
 from ml_cfb.ingest.games import fetch_games_for_season
 from ml_cfb.ingest.lines import fetch_lines_for_season
 from ml_cfb.ingest.advanced_stats import fetch_advanced_stats_for_season
-from ml_cfb.ingest.weather import fetch_weather_for_season
+from ml_cfb.ingest.team_sp import fetch_team_sp_for_season
+from ml_cfb.ingest.team_fpi import fetch_team_fpi_for_season
+from ml_cfb.ingest.returning_production import fetch_returning_production_for_season
 from ml_cfb.io.storage import write_csv
 from ml_cfb.transform.parsing import build_totals_dataset, build_training_dataset
 
@@ -49,7 +51,9 @@ def main(start: int | None, end: int | None) -> None:
     all_games: list[pd.DataFrame] = []
     all_lines: list[pd.DataFrame] = []
     all_advanced_stats: list[pd.DataFrame] = []
-    all_weather: list[pd.DataFrame] = []
+    all_team_sp: list[pd.DataFrame] = []
+    all_team_fpi: list[pd.DataFrame] = []
+    all_returning_production: list[pd.DataFrame] = []
 
     for season in seasons:
         click.echo(f"Fetching season {season} games and lines")
@@ -59,8 +63,14 @@ def main(start: int | None, end: int | None) -> None:
         click.echo(f"Fetching season {season} advanced stats")
         advanced_stats_df = fetch_advanced_stats_for_season(client, season=season)
         
-        click.echo(f"Fetching season {season} weather data")
-        weather_df = fetch_weather_for_season(client, season=season)
+        click.echo(f"Fetching season {season} TeamSP ratings")
+        team_sp_df = fetch_team_sp_for_season(client, season=season)
+        
+        click.echo(f"Fetching season {season} TeamFPI ratings")
+        team_fpi_df = fetch_team_fpi_for_season(client, season=season)
+        
+        click.echo(f"Fetching season {season} ReturningProduction")
+        returning_prod_df = fetch_returning_production_for_season(client, season=season)
 
         write_csv(games_df, settings.paths.data_raw / f"games_{season}.csv")
         write_csv(lines_df, settings.paths.data_raw / f"lines_{season}.csv")
@@ -69,14 +79,24 @@ def main(start: int | None, end: int | None) -> None:
             settings.paths.data_raw / f"advanced_stats_{season}.csv"
         )
         write_csv(
-            weather_df,
-            settings.paths.data_raw / f"weather_{season}.csv"
+            team_sp_df,
+            settings.paths.data_raw / f"team_sp_{season}.csv"
+        )
+        write_csv(
+            team_fpi_df,
+            settings.paths.data_raw / f"team_fpi_{season}.csv"
+        )
+        write_csv(
+            returning_prod_df,
+            settings.paths.data_raw / f"returning_production_{season}.csv"
         )
 
         all_games.append(games_df)
         all_lines.append(lines_df)
         all_advanced_stats.append(advanced_stats_df)
-        all_weather.append(weather_df)
+        all_team_sp.append(team_sp_df)
+        all_team_fpi.append(team_fpi_df)
+        all_returning_production.append(returning_prod_df)
 
     if not all_games:
         click.echo("No games fetched; nothing to process.")
@@ -89,13 +109,22 @@ def main(start: int | None, end: int | None) -> None:
         if all_advanced_stats
         else pd.DataFrame()
     )
-    weather_all = (
-        pd.concat(all_weather, ignore_index=True)
-        if all_weather
+    team_sp_all = (
+        pd.concat(all_team_sp, ignore_index=True)
+        if all_team_sp
+        else pd.DataFrame()
+    )
+    team_fpi_all = (
+        pd.concat(all_team_fpi, ignore_index=True)
+        if all_team_fpi
+        else pd.DataFrame()
+    )
+    returning_prod_all = (
+        pd.concat(all_returning_production, ignore_index=True)
+        if all_returning_production
         else pd.DataFrame()
     )
 
-    # Build totals dataset (for backward compatibility)
     totals_df = build_totals_dataset(games_all, lines_all)
     out_path = settings.paths.data_processed / "totals_dataset.csv"
     write_csv(totals_df, out_path)
@@ -105,7 +134,9 @@ def main(start: int | None, end: int | None) -> None:
         games_all, 
         lines_all, 
         advanced_stats_all,
-        weather_all
+        team_sp_all,
+        team_fpi_all,
+        returning_prod_all,
     )
     training_path = settings.paths.data_processed / "training_dataset.csv"
     write_csv(training_df, training_path)

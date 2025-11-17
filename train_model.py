@@ -1,3 +1,4 @@
+# train_model.py
 """
 Usage:
     python train_model.py
@@ -49,18 +50,134 @@ class CFBBettingModel:
         cols_to_fill = [
             "home_ppa_offense", "home_success_rate", "home_ppa_defense",
             "away_ppa_offense", "away_success_rate", "away_ppa_defense",
-            "temperature", "wind_speed", "precipitation"
         ]
-        
-        if "is_dome" in self.data.columns:
-            self.data["is_dome"] = self.data["is_dome"].fillna(0).astype(int)
         
         cols_found = [col for col in cols_to_fill if col in self.data.columns]
         if cols_found:
             print(f"--- Imputing NaNs for: {cols_found} ---")
             self.data[cols_found] = self.data[cols_found].fillna(0.0)
         else:
-            print("--- No advanced stats or weather columns found. ---")
+            print("--- No advanced stats columns found. ---")
+        
+        sp_rating_cols = [
+            "home_sp_rating", "home_sp_ranking", "home_sp_sos",
+            "home_sp_offense", "home_sp_offense_ranking",
+            "home_sp_defense", "home_sp_defense_ranking",
+            "home_sp_special_teams", "home_sp_special_teams_ranking",
+            "away_sp_rating", "away_sp_ranking", "away_sp_sos",
+            "away_sp_offense", "away_sp_offense_ranking",
+            "away_sp_defense", "away_sp_defense_ranking",
+            "away_sp_special_teams", "away_sp_special_teams_ranking",
+        ]
+        sp_cols_found = [col for col in sp_rating_cols if col in self.data.columns]
+        
+        sp_lookup: dict[tuple[int, str], dict[str, float]] = {}
+        if sp_cols_found and "season" in self.data.columns:
+            for season in self.data["season"].unique():
+                if pd.isna(season):
+                    continue
+                current_season = int(season)
+                prev_season = current_season - 1
+                prev_season_data = self.data[self.data["season"] == prev_season]
+                
+                if prev_season_data.empty:
+                    continue
+                
+                prev_season_data_sorted = prev_season_data.sort_values("date", ascending=False).copy()
+                team_sp_ratings: dict[str, dict[str, float]] = {}
+                
+                for _, row in prev_season_data_sorted.iterrows():
+                    team = row["home_team"]
+                    if pd.notna(team) and team not in team_sp_ratings:
+                        team_sp_ratings[team] = {}
+                        for col in sp_cols_found:
+                            if col.startswith("home_sp_") and pd.notna(row.get(col)):
+                                team_col = col.replace("home_sp_", "sp_")
+                                try:
+                                    team_sp_ratings[team][team_col] = float(row[col])
+                                except (ValueError, TypeError):
+                                    pass
+                
+                for _, row in prev_season_data_sorted.iterrows():
+                    team = row["away_team"]
+                    if pd.notna(team) and team not in team_sp_ratings:
+                        team_sp_ratings[team] = {}
+                        for col in sp_cols_found:
+                            if col.startswith("away_sp_") and pd.notna(row.get(col)):
+                                team_col = col.replace("away_sp_", "sp_")
+                                try:
+                                    team_sp_ratings[team][team_col] = float(row[col])
+                                except (ValueError, TypeError):
+                                    pass
+                
+                for team, ratings in team_sp_ratings.items():
+                    key = (current_season, team)
+                    sp_lookup[key] = ratings
+        
+        fpi_rating_cols = [
+            "home_fpi", "home_fpi_resume_rank", "home_fpi_sor_rank", "home_fpi_avg_wp_rank",
+            "home_fpi_offense", "home_fpi_defense", "home_fpi_special_teams",
+            "away_fpi", "away_fpi_resume_rank", "away_fpi_sor_rank", "away_fpi_avg_wp_rank",
+            "away_fpi_offense", "away_fpi_defense", "away_fpi_special_teams",
+        ]
+        fpi_cols_found = [col for col in fpi_rating_cols if col in self.data.columns]
+        
+        fpi_lookup: dict[tuple[int, str], dict[str, float]] = {}
+        if fpi_cols_found and "season" in self.data.columns:
+            for season in self.data["season"].unique():
+                if pd.isna(season):
+                    continue
+                current_season = int(season)
+                prev_season = current_season - 1
+                prev_season_data = self.data[self.data["season"] == prev_season]
+                
+                if prev_season_data.empty:
+                    continue
+                
+                prev_season_data_sorted = prev_season_data.sort_values("date", ascending=False).copy()
+                team_fpi_ratings: dict[str, dict[str, float]] = {}
+                
+                for _, row in prev_season_data_sorted.iterrows():
+                    team = row["home_team"]
+                    if pd.notna(team) and team not in team_fpi_ratings:
+                        team_fpi_ratings[team] = {}
+                        for col in fpi_cols_found:
+                            if col.startswith("home_fpi"):
+                                if col == "home_fpi":
+                                    team_col = "fpi"
+                                elif col.startswith("home_fpi_"):
+                                    team_col = col.replace("home_fpi_", "fpi_")
+                                else:
+                                    continue
+                                
+                                if pd.notna(row.get(col)):
+                                    try:
+                                        team_fpi_ratings[team][team_col] = float(row[col])
+                                    except (ValueError, TypeError):
+                                        pass
+                
+                for _, row in prev_season_data_sorted.iterrows():
+                    team = row["away_team"]
+                    if pd.notna(team) and team not in team_fpi_ratings:
+                        team_fpi_ratings[team] = {}
+                        for col in fpi_cols_found:
+                            if col.startswith("away_fpi"):
+                                if col == "away_fpi":
+                                    team_col = "fpi"
+                                elif col.startswith("away_fpi_"):
+                                    team_col = col.replace("away_fpi_", "fpi_")
+                                else:
+                                    continue
+                                
+                                if pd.notna(row.get(col)):
+                                    try:
+                                        team_fpi_ratings[team][team_col] = float(row[col])
+                                    except (ValueError, TypeError):
+                                        pass
+                
+                for team, ratings in team_fpi_ratings.items():
+                    key = (current_season, team)
+                    fpi_lookup[key] = ratings
             
         df = self.data
         feature_rows: list[dict[str, float]] = []
@@ -69,6 +186,7 @@ class CFBBettingModel:
             home_team = game["home_team"]
             away_team = game["away_team"]
             game_date = game["date"]
+            game_season = int(game.get("season", 0)) if pd.notna(game.get("season")) else 0
 
             home_history = df[
                 (
@@ -96,13 +214,13 @@ class CFBBettingModel:
             for _, hg in home_history.iterrows():
                 if hg["home_team"] == home_team:
                     pf, pa = hg["home_points"], hg["away_points"]
-                    if "home_ppa_offense" in hg:
+                    if cols_found:
                         h_ppa_off.append(hg["home_ppa_offense"])
                         h_success_rate.append(hg["home_success_rate"])
                         h_ppa_def.append(hg["home_ppa_defense"])
                 else:
                     pf, pa = hg["away_points"], hg["home_points"]
-                    if "away_ppa_offense" in hg:
+                    if cols_found:
                         h_ppa_off.append(hg["away_ppa_offense"])
                         h_success_rate.append(hg["away_success_rate"])
                         h_ppa_def.append(hg["away_ppa_defense"])
@@ -118,13 +236,13 @@ class CFBBettingModel:
             for _, ag in away_history.iterrows():
                 if ag["home_team"] == away_team:
                     pf, pa = ag["home_points"], ag["away_points"]
-                    if "home_ppa_offense" in ag:
+                    if cols_found:
                         a_ppa_off.append(ag["home_ppa_offense"])
                         a_success_rate.append(ag["home_success_rate"])
                         a_ppa_def.append(ag["home_ppa_defense"])
                 else:
                     pf, pa = ag["away_points"], ag["home_points"]
-                    if "away_ppa_offense" in ag:
+                    if cols_found:
                         a_ppa_off.append(ag["away_ppa_offense"])
                         a_success_rate.append(ag["away_success_rate"])
                         a_ppa_def.append(ag["away_ppa_defense"])
@@ -155,10 +273,76 @@ class CFBBettingModel:
             mismatch_away_off_vs_home_def_ppa = away_avg_ppa_off - home_avg_ppa_def
             mismatch_success_rate = home_avg_success_rate - away_avg_success_rate
             
+            home_sp_data = sp_lookup.get((game_season, home_team), {}) if sp_lookup else {}
+            away_sp_data = sp_lookup.get((game_season, away_team), {}) if sp_lookup else {}
+            
+            home_sp_rating = home_sp_data.get("sp_rating", 0.0)
+            home_sp_ranking = home_sp_data.get("sp_ranking", 0.0)
+            home_sp_offense = home_sp_data.get("sp_offense", 0.0)
+            home_sp_offense_ranking = home_sp_data.get("sp_offense_ranking", 0.0)
+            home_sp_defense = home_sp_data.get("sp_defense", 0.0)
+            home_sp_defense_ranking = home_sp_data.get("sp_defense_ranking", 0.0)
+            home_sp_special_teams = home_sp_data.get("sp_special_teams", 0.0)
+            
+            away_sp_rating = away_sp_data.get("sp_rating", 0.0)
+            away_sp_ranking = away_sp_data.get("sp_ranking", 0.0)
+            away_sp_offense = away_sp_data.get("sp_offense", 0.0)
+            away_sp_offense_ranking = away_sp_data.get("sp_offense_ranking", 0.0)
+            away_sp_defense = away_sp_data.get("sp_defense", 0.0)
+            away_sp_defense_ranking = away_sp_data.get("sp_defense_ranking", 0.0)
+            away_sp_special_teams = away_sp_data.get("sp_special_teams", 0.0)
+            
+            sp_rating_diff = home_sp_rating - away_sp_rating
+            sp_offense_diff = home_sp_offense - away_sp_offense
+            sp_defense_diff = home_sp_defense - away_sp_defense
+            sp_special_teams_diff = home_sp_special_teams - away_sp_special_teams
+            home_off_vs_away_def_sp = home_sp_offense - away_sp_defense
+            away_off_vs_home_def_sp = away_sp_offense - home_sp_defense
+            
+            home_fpi_data = fpi_lookup.get((game_season, home_team), {}) if fpi_lookup else {}
+            away_fpi_data = fpi_lookup.get((game_season, away_team), {}) if fpi_lookup else {}
+            
+            home_fpi = home_fpi_data.get("fpi", 0.0)
+            home_fpi_offense = home_fpi_data.get("fpi_offense", 0.0)
+            home_fpi_defense = home_fpi_data.get("fpi_defense", 0.0)
+            home_fpi_special_teams = home_fpi_data.get("fpi_special_teams", 0.0)
+            
+            away_fpi = away_fpi_data.get("fpi", 0.0)
+            away_fpi_offense = away_fpi_data.get("fpi_offense", 0.0)
+            away_fpi_defense = away_fpi_data.get("fpi_defense", 0.0)
+            away_fpi_special_teams = away_fpi_data.get("fpi_special_teams", 0.0)
+            
+            fpi_diff = home_fpi - away_fpi
+            fpi_offense_diff = home_fpi_offense - away_fpi_offense
+            fpi_defense_diff = home_fpi_defense - away_fpi_defense
+            fpi_special_teams_diff = home_fpi_special_teams - away_fpi_special_teams
+            home_off_vs_away_def_fpi = home_fpi_offense - away_fpi_defense
+            away_off_vs_home_def_fpi = away_fpi_offense - home_fpi_defense
+            
+            home_combined_offense = (home_sp_offense + home_fpi_offense) / 2.0 if (home_sp_offense != 0.0 and home_fpi_offense != 0.0) else 0.0
+            away_combined_offense = (away_sp_offense + away_fpi_offense) / 2.0 if (away_sp_offense != 0.0 and away_fpi_offense != 0.0) else 0.0
+            
+            home_combined_defense = (home_sp_defense + home_fpi_defense) / 2.0 if (home_sp_defense != 0.0 and home_fpi_defense != 0.0) else 0.0
+            away_combined_defense = (away_sp_defense + away_fpi_defense) / 2.0 if (away_sp_defense != 0.0 and away_fpi_defense != 0.0) else 0.0
+            combined_defense_diff = home_combined_defense - away_combined_defense
+            
+            home_sp_off_vs_away_fpi_def = home_sp_offense - away_fpi_defense
+            home_fpi_off_vs_away_sp_def = home_fpi_offense - away_sp_defense
+            
+            home_total_strength_fpi = home_fpi_offense + home_fpi_defense
+            away_total_strength_sp = away_sp_offense + away_sp_defense
+            
+            home_balance_sp = home_sp_offense - home_sp_defense
+            away_balance_sp = away_sp_offense - away_sp_defense
+            home_balance_fpi = home_fpi_offense - home_fpi_defense
+            away_balance_fpi = away_fpi_offense - away_fpi_defense
+            balance_sp_diff = home_balance_sp - away_balance_sp
+            
             feature_rows.append(
                 {
                     "ou_line": float(game["ou_line"]),
                     "spread": float(game.get("spread", 0.0)),
+                    "season": int(game.get("season", 0)),
                     "home_avg_pts": home_avg_pts,
                     "home_avg_pts_allowed": home_avg_pts_allowed,
                     "home_avg_total": home_avg_total,
@@ -186,11 +370,54 @@ class CFBBettingModel:
                     "mismatch_away_off_vs_home_def_ppa": mismatch_away_off_vs_home_def_ppa,
                     "mismatch_success_rate": mismatch_success_rate,
                     
-                    "is_dome": float(game.get("is_dome", 0.0)),
-                    "temp": float(game.get("temperature", 0.0)),
-                    "wind": float(game.get("wind_speed", 0.0)),
-                    "precip": float(game.get("precipitation", 0.0)),
-
+                    "home_sp_rating": home_sp_rating,
+                    "home_sp_ranking": home_sp_ranking,
+                    "home_sp_offense": home_sp_offense,
+                    "home_sp_offense_ranking": home_sp_offense_ranking,
+                    "home_sp_defense": home_sp_defense,
+                    "home_sp_defense_ranking": home_sp_defense_ranking,
+                    "home_sp_special_teams": home_sp_special_teams,
+                    "away_sp_rating": away_sp_rating,
+                    "away_sp_ranking": away_sp_ranking,
+                    "away_sp_offense": away_sp_offense,
+                    "away_sp_offense_ranking": away_sp_offense_ranking,
+                    "away_sp_defense": away_sp_defense,
+                    "away_sp_defense_ranking": away_sp_defense_ranking,
+                    "away_sp_special_teams": away_sp_special_teams,
+                    "sp_rating_diff": sp_rating_diff,
+                    "sp_offense_diff": sp_offense_diff,
+                    "sp_defense_diff": sp_defense_diff,
+                    "sp_special_teams_diff": sp_special_teams_diff,
+                    "home_off_vs_away_def_sp": home_off_vs_away_def_sp,
+                    "away_off_vs_home_def_sp": away_off_vs_home_def_sp,
+                    
+                    "home_fpi": home_fpi,
+                    "home_fpi_offense": home_fpi_offense,
+                    "home_fpi_defense": home_fpi_defense,
+                    "home_fpi_special_teams": home_fpi_special_teams,
+                    "away_fpi": away_fpi,
+                    "away_fpi_offense": away_fpi_offense,
+                    "away_fpi_defense": away_fpi_defense,
+                    "away_fpi_special_teams": away_fpi_special_teams,
+                    "fpi_diff": fpi_diff,
+                    "fpi_offense_diff": fpi_offense_diff,
+                    "fpi_defense_diff": fpi_defense_diff,
+                    "fpi_special_teams_diff": fpi_special_teams_diff,
+                    "home_off_vs_away_def_fpi": home_off_vs_away_def_fpi,
+                    "away_off_vs_home_def_fpi": away_off_vs_home_def_fpi,
+                    
+                    "home_combined_offense": home_combined_offense,
+                    "away_combined_defense": away_combined_defense,
+                    "combined_defense_diff": combined_defense_diff,
+                    "home_sp_off_vs_away_fpi_def": home_sp_off_vs_away_fpi_def,
+                    "home_fpi_off_vs_away_sp_def": home_fpi_off_vs_away_sp_def,
+                    "home_total_strength_fpi": home_total_strength_fpi,
+                    "away_total_strength_sp": away_total_strength_sp,
+                    "home_balance_sp": home_balance_sp,
+                    "home_balance_fpi": home_balance_fpi,
+                    "away_balance_fpi": away_balance_fpi,
+                    "balance_sp_diff": balance_sp_diff,
+                    
                     "went_over": int(game["went_over"]),
                 }
             )
@@ -202,11 +429,157 @@ class CFBBettingModel:
 
         self.features = features
 
-    def train(self) -> tuple[pd.DataFrame, pd.Series, np.ndarray]:
+    def _simulate_bets(
+        self,
+        y_test: pd.Series,
+        y_pred_proba: np.ndarray,
+        ev_thresh: float,
+        bet_amount: float = 10,
+        odds_payout: float = 1.909,
+    ) -> dict[str, float]:
+        profits: list[float] = []
+        bets_placed = 0
+        wins = 0
+        over_bets = 0
+        under_bets = 0
+        over_wins = 0
+        under_wins = 0
+
+        for idx, prob_over in enumerate(y_pred_proba):
+            ev_over = (prob_over * (bet_amount * (odds_payout - 1))) - (
+                (1 - prob_over) * bet_amount
+            )
+            ev_under = ((1 - prob_over) * (bet_amount * (odds_payout - 1))) - (
+                prob_over * bet_amount
+            )
+
+            profit = 0.0
+            actual = y_test.iloc[idx]
+
+            if ev_over > (bet_amount * ev_thresh):
+                profit = bet_amount * (odds_payout - 1) if actual == 1 else -bet_amount
+                over_bets += 1
+                if profit > 0:
+                    over_wins += 1
+                    wins += 1
+                bets_placed += 1
+            elif ev_under > (bet_amount * ev_thresh):
+                profit = bet_amount * (odds_payout - 1) if actual == 0 else -bet_amount
+                under_bets += 1
+                if profit > 0:
+                    under_wins += 1
+                    wins += 1
+                bets_placed += 1
+
+            if profit != 0:
+                profits.append(profit)
+
+        total_profit = float(sum(profits))
+        roi = (
+            (total_profit / (bets_placed * bet_amount)) * 100 if bets_placed else 0.0
+        )
+        win_rate = (sum(1 for p in profits if p > 0) / bets_placed * 100) if bets_placed else 0.0
+        over_win_rate = (over_wins / over_bets * 100) if over_bets > 0 else 0.0
+        under_win_rate = (under_wins / under_bets * 100) if under_bets > 0 else 0.0
+
+        win_rate_ci = self._win_rate_ci(bets_placed, wins)
+        roi_ci = self._roi_ci(win_rate_ci, odds_payout)
+
+        return {
+            "bets": float(bets_placed),
+            "profit": total_profit,
+            "roi": roi,
+            "win_rate": win_rate,
+            "win_rate_ci": win_rate_ci,
+            "roi_ci": roi_ci,
+            "over_bets": float(over_bets),
+            "over_win_rate": over_win_rate,
+            "under_bets": float(under_bets),
+            "under_win_rate": under_win_rate,
+        }
+
+    def _tune_hyperparameters(self, X_train: pd.DataFrame, y_train: pd.Series) -> dict:
+        """Tune hyperparameters using walk-forward validation on training data."""
+        print("\n--- Hyperparameter Tuning ---")
+        
+        param_grid = {
+            'max_depth': [3, 4, 5],
+            'learning_rate': [0.05, 0.1, 0.15],
+            'min_child_weight': [2, 3, 5],
+        }
+        
+        if hasattr(self, 'features') and 'season' in self.features.columns:
+            season_col = self.features['season'].iloc[:len(X_train)]
+            unique_seasons = sorted(season_col.unique())
+            tune_seasons = unique_seasons[-3:] if len(unique_seasons) >= 3 else unique_seasons
+            tune_mask = season_col.isin(tune_seasons).values
+            X_tune = X_train.iloc[tune_mask] if hasattr(X_train, 'iloc') else X_train[tune_mask]
+            y_tune = y_train.iloc[tune_mask] if hasattr(y_train, 'iloc') else y_train[tune_mask]
+        else:
+            X_tune = X_train
+            y_tune = y_train
+        
+        best_params = None
+        best_score = -float('inf')
+        results = []
+        
+        for max_depth in param_grid['max_depth']:
+            for learning_rate in param_grid['learning_rate']:
+                for min_child_weight in param_grid['min_child_weight']:
+                    if len(X_tune) > 1000:
+                        val_size = int(len(X_tune) * 0.2)
+                        X_tr = X_tune.iloc[:-val_size].values
+                        y_tr = y_tune.iloc[:-val_size].values
+                        X_val = X_tune.iloc[-val_size:].values
+                        y_val = y_tune.iloc[-val_size:].values
+                    else:
+                        X_tr = X_tune.values
+                        y_tr = y_tune.values
+                        X_val = X_tr
+                        y_val = y_tr
+                    
+                    model = xgb.XGBClassifier(
+                        n_estimators=50,
+                        max_depth=max_depth,
+                        learning_rate=learning_rate,
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        min_child_weight=min_child_weight,
+                        reg_alpha=0.1,
+                        reg_lambda=1.0,
+                        random_state=42,
+                        objective="binary:logistic",
+                        eval_metric="logloss",
+                        enable_categorical=False,
+                    )
+                    
+                    model.fit(X_tr, y_tr)
+                    y_pred_proba = model.predict_proba(X_val)[:, 1]
+                    score = roc_auc_score(y_val, y_pred_proba)
+                    
+                    results.append({
+                        'max_depth': max_depth,
+                        'learning_rate': learning_rate,
+                        'min_child_weight': min_child_weight,
+                        'score': score
+                    })
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_params = {
+                            'max_depth': max_depth,
+                            'learning_rate': learning_rate,
+                            'min_child_weight': min_child_weight,
+                        }
+        
+        print(f"  Best params: {best_params} (AUC: {best_score:.4f})")
+        return best_params
+    
+    def train(self, tune_hyperparameters: bool = True) -> tuple[pd.DataFrame, pd.Series, np.ndarray]:
         if self.features is None:
             raise ValueError("Features must be created before training.")
 
-        X = self.features.drop(columns=["went_over"])
+        X = self.features.drop(columns=["went_over", "season"])
         y = self.features["went_over"]
 
         split_idx = int(len(X) * 0.8)
@@ -218,12 +591,25 @@ class CFBBettingModel:
         y_train_np = y_train.values
         y_test_np = y_test.values
 
+        if tune_hyperparameters:
+            best_params = self._tune_hyperparameters(X_train, y_train)
+            max_depth = best_params['max_depth']
+            learning_rate = best_params['learning_rate']
+            min_child_weight = best_params['min_child_weight']
+        else:
+            max_depth = 4
+            learning_rate = 0.1
+            min_child_weight = 3
+
         base_model = xgb.XGBClassifier(
             n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
             subsample=0.8,
             colsample_bytree=0.8,
+            min_child_weight=min_child_weight,
+            reg_alpha=0.1,  # Added: L1 regularization
+            reg_lambda=1.0,  # Added: L2 regularization
             random_state=42,
             objective="binary:logistic",
             eval_metric="logloss",
@@ -242,10 +628,13 @@ class CFBBettingModel:
 
         cal_base_model = xgb.XGBClassifier(
             n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
             subsample=0.8,
             colsample_bytree=0.8,
+            min_child_weight=min_child_weight,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
             random_state=42,
             objective="binary:logistic",
             eval_metric="logloss",
@@ -274,6 +663,129 @@ class CFBBettingModel:
 
         return X_test, y_test, y_pred_proba
 
+    def _win_rate_ci(self, bets: float, wins: float, alpha: float = 0.05) -> tuple[float, float]:
+        """Normal-approx 95% CI for win rate; returns percents."""
+        if bets == 0:
+            return (0.0, 0.0)
+        p = wins / bets
+        se = np.sqrt(p * (1 - p) / bets)
+        z = 1.96
+        lower = max(0.0, p - z * se) * 100
+        upper = min(1.0, p + z * se) * 100
+        return (lower, upper)
+
+    def _roi_ci(self, win_rate_ci: tuple[float, float], odds_payout: float) -> tuple[float, float]:
+        """Translate win rate CI to ROI CI (percent) using the odds payout."""
+        lower_wr = win_rate_ci[0] / 100
+        upper_wr = win_rate_ci[1] / 100
+        def roi_from_p(p: float) -> float:
+            return (p * (odds_payout - 1) - (1 - p)) * 100
+
+        return (roi_from_p(lower_wr), roi_from_p(upper_wr))
+
+    def walk_forward_by_season(self) -> None:
+        if self.features is None:
+            raise ValueError("Features must be created before training.")
+
+        if "season" not in self.features.columns:
+            print("No season column available for walk-forward evaluation.")
+            return
+
+        seasons = sorted(self.features["season"].unique())
+        if len(seasons) < 2:
+            print("Not enough seasons for walk-forward evaluation.")
+            return
+
+        feature_cols = [c for c in self.features.columns if c not in {"went_over", "season"}]
+        ev_thresholds = [0.01, 0.03, 0.05, 0.07, 0.10]
+        bet_amount = 10
+        odds_payout = 1.909
+
+        agg_results: dict[float, dict[str, float]] = {
+            ev: {"profit": 0.0, "bets": 0.0} for ev in ev_thresholds
+        }
+
+        print("\n=== Season Walk-Forward Evaluation ===")
+        for test_season in seasons[1:]:
+            train_df = self.features[self.features["season"] < test_season]
+            test_df = self.features[self.features["season"] == test_season]
+
+            if len(train_df) < 25 or len(test_df) == 0:
+                print(f"Season {test_season}: skipped (train={len(train_df)}, test={len(test_df)}).")
+                continue
+
+            X_train = train_df[feature_cols]
+            y_train = train_df["went_over"]
+            X_test = test_df[feature_cols]
+            y_test = test_df["went_over"]
+
+            base_model = xgb.XGBClassifier(
+                n_estimators=100,
+                max_depth=3,
+                learning_rate=0.15,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                min_child_weight=2,
+                reg_alpha=0.1,
+                reg_lambda=1.0,
+                random_state=42,
+                objective="binary:logistic",
+                eval_metric="logloss",
+                enable_categorical=False,
+            )
+
+            base_model.fit(X_train.values, y_train.values)
+
+            cal_model = CalibratedClassifierCV(
+                base_model,
+                method="isotonic",
+                cv=TimeSeriesSplit(n_splits=3),
+            )
+            cal_model.fit(X_train.values, y_train.values)
+
+            y_pred_proba = cal_model.predict_proba(X_test.values)[:, 1]
+
+            print(
+                f"\nSeason {test_season}: "
+                f"test_n={len(test_df)}, "
+                f"base_over_rate={y_test.mean():.3f}, "
+                f"Accuracy={accuracy_score(y_test, cal_model.predict(X_test)):.3f}, "
+                f"AUC={roc_auc_score(y_test, y_pred_proba):.3f}, "
+                f"Brier={brier_score_loss(y_test, y_pred_proba):.4f}"
+            )
+
+            for ev_thresh in ev_thresholds:
+                stats = self._simulate_bets(
+                    y_test=y_test,
+                    y_pred_proba=y_pred_proba,
+                    ev_thresh=ev_thresh,
+                    bet_amount=bet_amount,
+                    odds_payout=odds_payout,
+                )
+                agg_results[ev_thresh]["profit"] += stats["profit"]
+                agg_results[ev_thresh]["bets"] += stats["bets"]
+
+                print(
+                    f"  EV>{ev_thresh*100:.0f}% | bets={int(stats['bets'])} | "
+                    f"ROI={stats['roi']:.2f}% | win_rate={stats['win_rate']:.2f}% | "
+                    f"win_CI=[{stats['win_rate_ci'][0]:.1f}, {stats['win_rate_ci'][1]:.1f}] | "
+                    f"roi_CI=[{stats['roi_ci'][0]:.1f}, {stats['roi_ci'][1]:.1f}] | "
+                    f"over_win_rate={stats['over_win_rate']:.2f}% ({int(stats['over_bets'])} bets) | "
+                    f"under_win_rate={stats['under_win_rate']:.2f}% ({int(stats['under_bets'])} bets)"
+                )
+
+        print("\n--- Walk-Forward Summary ---")
+        for ev_thresh in ev_thresholds:
+            bets = agg_results[ev_thresh]["bets"]
+            profit = agg_results[ev_thresh]["profit"]
+            if bets == 0:
+                print(f"  EV>{ev_thresh*100:.0f}% | No bets across seasons.")
+                continue
+            roi = (profit / (bets * bet_amount)) * 100
+            print(
+                f"  EV>{ev_thresh*100:.0f}% | Total bets={int(bets)} | ROI={roi:.2f}% | P/L=${profit:.2f}"
+            )
+
     def evaluate_betting(
         self, X_test: pd.DataFrame, y_test: pd.Series, y_pred_proba: np.ndarray
     ) -> None:
@@ -281,68 +793,31 @@ class CFBBettingModel:
         odds_payout = 1.909
 
         for ev_thresh in [0.01, 0.03, 0.05, 0.07, 0.10]:
-            profits: list[float] = []
-            bets_placed: list[str] = []
-            
-            over_bets = 0
-            under_bets = 0
-            over_wins = 0
-            under_wins = 0
-
-            for idx, prob_over in enumerate(y_pred_proba):
-                ev_over = (prob_over * (bet_amount * (odds_payout - 1))) - (
-                    (1 - prob_over) * bet_amount
-                )
-                ev_under = ((1 - prob_over) * (bet_amount * (odds_payout - 1))) - (
-                    prob_over * bet_amount
-                )
-
-                profit = 0.0
-                bet_made: str | None = None
-                actual = y_test.iloc[idx]
-
-                if ev_over > (bet_amount * ev_thresh):
-                    profit = (
-                        bet_amount * (odds_payout - 1) if actual == 1 else -bet_amount
-                    )
-                    bet_made = "Over"
-                    over_bets += 1
-                    if profit > 0:
-                        over_wins += 1
-                elif ev_under > (bet_amount * ev_thresh):
-                    profit = (
-                        bet_amount * (odds_payout - 1) if actual == 0 else -bet_amount
-                    )
-                    bet_made = "Under"
-                    under_bets += 1
-                    if profit > 0:
-                        under_wins += 1
-
-                if bet_made:
-                    profits.append(profit)
-                    bets_placed.append(bet_made)
+            stats = self._simulate_bets(
+                y_test=y_test,
+                y_pred_proba=y_pred_proba,
+                ev_thresh=ev_thresh,
+                bet_amount=bet_amount,
+                odds_payout=odds_payout,
+            )
 
             print(f"\n--- Betting Results (EV > {ev_thresh * 100:.0f}%) ---")
-            if not bets_placed:
+            if stats["bets"] == 0:
                 print("  No bets met the threshold.")
                 continue
 
-            total_profit = float(sum(profits))
-            roi = (total_profit / (len(bets_placed) * bet_amount)) * 100
-            win_rate = (sum(1 for p in profits if p > 0) / len(profits)) * 100
-
             print(
-                f"  Bets: {len(bets_placed)} | Win Rate: {win_rate:.2f}% | "
-                f"ROI: {roi:.2f}% | P/L: ${total_profit:.2f}"
+                f"  Bets: {int(stats['bets'])} | Win Rate: {stats['win_rate']:.2f}% "
+                f"(CI [{stats['win_rate_ci'][0]:.1f}, {stats['win_rate_ci'][1]:.1f}]) | "
+                f"ROI: {stats['roi']:.2f}% (CI [{stats['roi_ci'][0]:.1f}, {stats['roi_ci'][1]:.1f}]) | "
+                f"P/L: ${stats['profit']:.2f}"
             )
             
-            over_win_rate = (over_wins / over_bets * 100) if over_bets > 0 else 0
-            under_win_rate = (under_wins / under_bets * 100) if under_bets > 0 else 0
             print(
-                f"    Overs:  {over_bets} bets ({over_win_rate:.2f}% win rate)"
+                f"    Overs:  {int(stats['over_bets'])} bets ({stats['over_win_rate']:.2f}% win rate)"
             )
             print(
-                f"    Unders: {under_bets} bets ({under_win_rate:.2f}% win rate)"
+                f"    Unders: {int(stats['under_bets'])} bets ({stats['under_win_rate']:.2f}% win rate)"
             )
 
     def plot(
@@ -406,6 +881,7 @@ def main() -> None:
     model.load_data(dataset_path)
     model.create_features()
     X_test, y_test, y_pred_proba = model.train()
+    model.walk_forward_by_season()
     model.evaluate_betting(X_test, y_test, y_pred_proba)
     model.plot(X_test, y_test, y_pred_proba)
 

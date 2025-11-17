@@ -41,7 +41,17 @@ class CFBDClient:
         url = f"{self.BASE_URL}{endpoint}"
         response = self.session.get(url, params=params, timeout=30)
         response.raise_for_status()
-        return response.json()
+        if not response.text or not response.text.strip():
+            return []
+        try:
+            data = response.json()
+            if isinstance(data, dict):
+                return [data]
+            return data if isinstance(data, list) else []
+        except ValueError as e:
+            print(f"Warning: Failed to parse JSON from {endpoint}: {e}")
+            print(f"Response text (first 200 chars): {response.text[:200]}")
+            return []
 
 class GamesAPI:
     def __init__(self, client: CFBDClient):
@@ -63,22 +73,6 @@ class GamesAPI:
         
         data = self.client._get("/games", params=params)
         return [Game(**_convert_keys_to_snake_case(item)) for item in data]
-
-    def get_weather(
-        self,
-        year: Optional[int] = None,
-        week: Optional[int] = None,
-        season_type: Optional[str] = "regular",
-    ) -> List[Dict]:
-        params = {}
-        if year is not None:
-            params["year"] = year
-        if week is not None:
-            params["week"] = week
-        if season_type is not None:
-            params["seasonType"] = season_type
-        
-        return self.client._get("/games/weather", params=params)
 
 class BettingAPI:
     def __init__(self, client: CFBDClient):
@@ -122,6 +116,15 @@ class StatsAPI:
             params["excludeGarbageTime"] = str(exclude_garbage_time).lower()
         return self.client._get("/stats/game/advanced", params=params)
 
+    def get_returning_production(
+        self,
+        year: Optional[int] = None,
+    ) -> List[Dict]:
+        params = {}
+        if year is not None:
+            params["year"] = year
+        return self.client._get("/stats/returning", params=params)
+
 def build_cfbd_client(api_key: str) -> CFBDClient:
     return CFBDClient(api_key)
 
@@ -133,3 +136,28 @@ def get_betting_api(client: CFBDClient) -> BettingAPI:
 
 def get_stats_api(client: CFBDClient) -> StatsAPI:
     return StatsAPI(client)
+
+class RatingsAPI:
+    def __init__(self, client: CFBDClient):
+        self.client = client
+
+    def get_team_sp_ratings(
+        self,
+        year: Optional[int] = None,
+    ) -> List[Dict]:
+        params = {}
+        if year is not None:
+            params["year"] = year
+        return self.client._get("/ratings/sp", params=params)
+
+    def get_team_fpi_ratings(
+        self,
+        year: Optional[int] = None,
+    ) -> List[Dict]:
+        params = {}
+        if year is not None:
+            params["year"] = year
+        return self.client._get("/ratings/fpi", params=params)
+
+def get_ratings_api(client: CFBDClient) -> RatingsAPI:
+    return RatingsAPI(client)
