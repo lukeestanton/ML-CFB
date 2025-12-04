@@ -77,9 +77,6 @@ def build_training_dataset(
     team_fpi_df: pd.DataFrame,
     returning_prod_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Build the modeling dataset for totals.
-    """
     if games_df.empty:
         return pd.DataFrame()
 

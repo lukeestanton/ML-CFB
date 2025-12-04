@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Dict, List, Optional
 import requests
+from requests.exceptions import RequestException, Timeout
+
 
 def _camel_to_snake(name: str) -> str:
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
@@ -37,21 +40,39 @@ class CFBDClient:
             "Accept": "application/json"
         })
     
-    def _get(self, endpoint: str, params: Optional[Dict] = None) -> List[Dict]:
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        max_retries: int = 3,
+        timeout: int = 60,
+    ) -> List[Dict]:
         url = f"{self.BASE_URL}{endpoint}"
-        response = self.session.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        if not response.text or not response.text.strip():
-            return []
-        try:
-            data = response.json()
-            if isinstance(data, dict):
-                return [data]
-            return data if isinstance(data, list) else []
-        except ValueError as e:
-            print(f"Warning: Failed to parse JSON from {endpoint}: {e}")
-            print(f"Response text (first 200 chars): {response.text[:200]}")
-            return []
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(url, params=params, timeout=timeout)
+                response.raise_for_status()
+                if not response.text or not response.text.strip():
+                    return []
+                try:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        return [data]
+                    return data if isinstance(data, list) else []
+                except ValueError as e:
+                    print(f"Warning: Failed to parse JSON from {endpoint}: {e}")
+                    print(f"Response text (first 200 chars): {response.text[:200]}")
+                    return []
+            except (Timeout, RequestException) as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"Request to {endpoint} failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Request to {endpoint} failed after {max_retries} attempts: {e}")
+                    raise
 
 class GamesAPI:
     def __init__(self, client: CFBDClient):
@@ -123,7 +144,7 @@ class StatsAPI:
         params = {}
         if year is not None:
             params["year"] = year
-        return self.client._get("/stats/returning", params=params)
+        return self.client._get("/player/returning", params=params)
 
 def build_cfbd_client(api_key: str) -> CFBDClient:
     return CFBDClient(api_key)

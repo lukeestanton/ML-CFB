@@ -30,8 +30,25 @@ class CFBBettingModel:
         self.model: xgb.XGBClassifier | None = None
         self.calibrated_model: CalibratedClassifierCV | None = None
 
-    def load_data(self, file_path: str | Path) -> None:
+    def load_data(
+        self, 
+        file_path: str | Path, 
+        cutoff_date: str | None = None,
+        require_complete_data: bool = False,
+    ) -> None:
         df = pd.read_csv(file_path, parse_dates=["date"])
+
+        if cutoff_date:
+            cutoff = pd.to_datetime(cutoff_date, utc=True)
+            original_len = len(df)
+            df = df[df["date"] <= cutoff].copy()
+            print(f"--- Excluding games after {cutoff_date}: {original_len} → {len(df)} games ---")
+
+        if require_complete_data:
+            original_len = len(df)
+            sp_mask = df["home_sp_rating"].notna() & df["away_sp_rating"].notna()
+            df = df[sp_mask].copy()
+            print(f"--- Filtering for complete SP+ data: {original_len} → {len(df)} games ({len(df)/original_len*100:.1f}%) ---")
 
         df["total_points"] = df["home_points"] + df["away_points"]
 
@@ -54,7 +71,7 @@ class CFBBettingModel:
         
         cols_found = [col for col in cols_to_fill if col in self.data.columns]
         if cols_found:
-            print(f"--- Imputing NaNs for: {cols_found} ---")
+            print(f"--- Imputing NaNs for: {cols_found} (using 0.0) ---")
             self.data[cols_found] = self.data[cols_found].fillna(0.0)
         else:
             print("--- No advanced stats columns found. ---")
@@ -276,6 +293,8 @@ class CFBBettingModel:
             home_sp_data = sp_lookup.get((game_season, home_team), {}) if sp_lookup else {}
             away_sp_data = sp_lookup.get((game_season, away_team), {}) if sp_lookup else {}
             
+            has_complete_sp = bool(home_sp_data) and bool(away_sp_data)
+            
             home_sp_rating = home_sp_data.get("sp_rating", 0.0)
             home_sp_ranking = home_sp_data.get("sp_ranking", 0.0)
             home_sp_offense = home_sp_data.get("sp_offense", 0.0)
@@ -418,6 +437,7 @@ class CFBBettingModel:
                     "away_balance_fpi": away_balance_fpi,
                     "balance_sp_diff": balance_sp_diff,
                     
+                    "has_complete_sp": has_complete_sp,
                     "went_over": int(game["went_over"]),
                 }
             )
@@ -436,6 +456,8 @@ class CFBBettingModel:
         ev_thresh: float,
         bet_amount: float = 10,
         odds_payout: float = 1.909,
+        bet_filter: np.ndarray | None = None,
+        bet_type: str = "all",
     ) -> dict[str, float]:
         profits: list[float] = []
         bets_placed = 0
@@ -446,6 +468,9 @@ class CFBBettingModel:
         under_wins = 0
 
         for idx, prob_over in enumerate(y_pred_proba):
+            if bet_filter is not None and not bet_filter[idx]:
+                continue
+                
             ev_over = (prob_over * (bet_amount * (odds_payout - 1))) - (
                 (1 - prob_over) * bet_amount
             )
@@ -456,14 +481,14 @@ class CFBBettingModel:
             profit = 0.0
             actual = y_test.iloc[idx]
 
-            if ev_over > (bet_amount * ev_thresh):
+            if bet_type != "under" and ev_over > (bet_amount * ev_thresh):
                 profit = bet_amount * (odds_payout - 1) if actual == 1 else -bet_amount
                 over_bets += 1
                 if profit > 0:
                     over_wins += 1
                     wins += 1
                 bets_placed += 1
-            elif ev_under > (bet_amount * ev_thresh):
+            elif bet_type != "over" and ev_under > (bet_amount * ev_thresh):
                 profit = bet_amount * (odds_payout - 1) if actual == 0 else -bet_amount
                 under_bets += 1
                 if profit > 0:
@@ -499,7 +524,6 @@ class CFBBettingModel:
         }
 
     def _tune_hyperparameters(self, X_train: pd.DataFrame, y_train: pd.Series) -> dict:
-        """Tune hyperparameters using walk-forward validation on training data."""
         print("\n--- Hyperparameter Tuning ---")
         
         param_grid = {
@@ -608,8 +632,8 @@ class CFBBettingModel:
             subsample=0.8,
             colsample_bytree=0.8,
             min_child_weight=min_child_weight,
-            reg_alpha=0.1,  # Added: L1 regularization
-            reg_lambda=1.0,  # Added: L2 regularization
+            reg_alpha=0.1,
+            reg_lambda=1.0,
             random_state=42,
             objective="binary:logistic",
             eval_metric="logloss",
@@ -654,7 +678,6 @@ class CFBBettingModel:
         return X_test, y_test, y_pred_proba
 
     def _win_rate_ci(self, bets: float, wins: float, alpha: float = 0.05) -> tuple[float, float]:
-        """Normal-approx 95% CI for win rate; returns percents."""
         if bets == 0:
             return (0.0, 0.0)
         p = wins / bets
@@ -665,7 +688,6 @@ class CFBBettingModel:
         return (lower, upper)
 
     def _roi_ci(self, win_rate_ci: tuple[float, float], odds_payout: float) -> tuple[float, float]:
-        """Translate win rate CI to ROI CI (percent) using the odds payout."""
         lower_wr = win_rate_ci[0] / 100
         upper_wr = win_rate_ci[1] / 100
         def roi_from_p(p: float) -> float:
@@ -686,12 +708,15 @@ class CFBBettingModel:
             print("Not enough seasons for walk-forward evaluation.")
             return
 
-        feature_cols = [c for c in self.features.columns if c not in {"went_over", "season"}]
+        feature_cols = [c for c in self.features.columns if c not in {"went_over", "season", "has_complete_sp"}]
         ev_thresholds = [0.01, 0.03, 0.05, 0.07, 0.10]
         bet_amount = 10
         odds_payout = 1.909
 
         agg_results: dict[float, dict[str, float]] = {
+            ev: {"profit": 0.0, "bets": 0.0} for ev in ev_thresholds
+        }
+        agg_under_only: dict[float, dict[str, float]] = {
             ev: {"profit": 0.0, "bets": 0.0} for ev in ev_thresholds
         }
 
@@ -708,6 +733,8 @@ class CFBBettingModel:
             y_train = train_df["went_over"]
             X_test = test_df[feature_cols]
             y_test = test_df["went_over"]
+            
+            bet_filter = None
 
             base_model = xgb.XGBClassifier(
                 n_estimators=100,
@@ -751,25 +778,51 @@ class CFBBettingModel:
                     ev_thresh=ev_thresh,
                     bet_amount=bet_amount,
                     odds_payout=odds_payout,
+                    bet_filter=bet_filter,
                 )
                 agg_results[ev_thresh]["profit"] += stats["profit"]
                 agg_results[ev_thresh]["bets"] += stats["bets"]
 
+                under_stats = self._simulate_bets(
+                    y_test=y_test,
+                    y_pred_proba=y_pred_proba,
+                    ev_thresh=ev_thresh,
+                    bet_amount=bet_amount,
+                    odds_payout=odds_payout,
+                    bet_filter=bet_filter,
+                    bet_type="under",
+                )
+                agg_under_only[ev_thresh]["profit"] += under_stats["profit"]
+                agg_under_only[ev_thresh]["bets"] += under_stats["bets"]
+
+                under_roi = (under_stats["profit"] / (under_stats["bets"] * bet_amount) * 100) if under_stats["bets"] > 0 else 0.0
+                
                 print(
                     f"  EV>{ev_thresh*100:.0f}% | bets={int(stats['bets'])} | "
                     f"ROI={stats['roi']:.2f}% | win_rate={stats['win_rate']:.2f}% | "
-                    f"win_CI=[{stats['win_rate_ci'][0]:.1f}, {stats['win_rate_ci'][1]:.1f}] | "
-                    f"roi_CI=[{stats['roi_ci'][0]:.1f}, {stats['roi_ci'][1]:.1f}] | "
-                    f"over_win_rate={stats['over_win_rate']:.2f}% ({int(stats['over_bets'])} bets) | "
-                    f"under_win_rate={stats['under_win_rate']:.2f}% ({int(stats['under_bets'])} bets)"
+                    f"over={int(stats['over_bets'])} ({stats['over_win_rate']:.1f}%) | "
+                    f"under={int(stats['under_bets'])} ({stats['under_win_rate']:.1f}%) | "
+                    f"UNDER-ONLY ROI={under_roi:.2f}%"
                 )
 
-        print("\n--- Walk-Forward Summary ---")
+        print("\n--- Walk-Forward Summary (All Bets) ---")
         for ev_thresh in ev_thresholds:
             bets = agg_results[ev_thresh]["bets"]
             profit = agg_results[ev_thresh]["profit"]
             if bets == 0:
                 print(f"  EV>{ev_thresh*100:.0f}% | No bets across seasons.")
+                continue
+            roi = (profit / (bets * bet_amount)) * 100
+            print(
+                f"  EV>{ev_thresh*100:.0f}% | Total bets={int(bets)} | ROI={roi:.2f}% | P/L=${profit:.2f}"
+            )
+
+        print("\n--- Walk-Forward Summary (UNDER ONLY) ---")
+        for ev_thresh in ev_thresholds:
+            bets = agg_under_only[ev_thresh]["bets"]
+            profit = agg_under_only[ev_thresh]["profit"]
+            if bets == 0:
+                print(f"  EV>{ev_thresh*100:.0f}% | No Under bets across seasons.")
                 continue
             roi = (profit / (bets * bet_amount)) * 100
             print(
@@ -809,6 +862,21 @@ class CFBBettingModel:
             print(
                 f"    Unders: {int(stats['under_bets'])} bets ({stats['under_win_rate']:.2f}% win rate)"
             )
+
+    def print_feature_importance(self, X_test: pd.DataFrame, top_n: int = 15) -> None:
+        if self.model is None:
+            raise ValueError("Model must be trained before printing feature importance.")
+
+        feat_imp = pd.DataFrame(
+            {
+                "feature": X_test.columns,
+                "importance": self.model.feature_importances_,
+            }
+        ).sort_values("importance", ascending=False)
+
+        print(f"\n--- Top {top_n} Feature Importance ---")
+        for i, row in feat_imp.head(top_n).iterrows():
+            print(f"  {feat_imp.head(top_n).index.get_loc(i) + 1:2d}. {row['feature']:<40} {row['importance']:.4f}")
 
     def plot(
         self, X_test: pd.DataFrame, y_test: pd.Series, y_pred_proba: np.ndarray
@@ -868,9 +936,10 @@ def main() -> None:
         )
 
     model = CFBBettingModel()
-    model.load_data(dataset_path)
+    model.load_data(dataset_path, cutoff_date="2025-11-22")
     model.create_features()
     X_test, y_test, y_pred_proba = model.train()
+    model.print_feature_importance(X_test)
     model.walk_forward_by_season()
     model.plot(X_test, y_test, y_pred_proba)
 

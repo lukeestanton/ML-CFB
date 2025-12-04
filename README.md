@@ -17,7 +17,7 @@ Create `.env` file in root:
 ```bash
 echo "CFBD_API_KEY=YOUR_KEY_HERE" >> .env
 ```
-Optionally also set `CFBD_START_SEASON` and `CFBD_END_SEASON` in `.env` (defaults: 2018–2025)
+Optionally also set `CFBD_START_SEASON` and `CFBD_END_SEASON` in `.env` (defaults: 2022–2025)
 
 3. **Build the dataset:**
 ```bash
@@ -79,7 +79,7 @@ The model uses a comprehensive feature set combining rolling statistics and pres
 
 - **Algorithm**: XGBoost Classifier
 - **Hyperparameters**: Tuned via walk-forward validation on recent seasons
-  - Best params: `max_depth=3`, `learning_rate=0.15`, `min_child_weight=2`
+  - Best params: `max_depth=5`, `learning_rate=0.05`, `min_child_weight=5`
 - **Calibration**: Isotonic calibration using TimeSeriesSplit (3 folds) for improved probability estimates
 - **Regularization**: L1 (alpha=0.1) and L2 (lambda=1.0) regularization
 
@@ -103,31 +103,45 @@ The model uses **walk-forward validation by season** to simulate realistic betti
 #### Season-by-Season Performance
 
 **Season 2023** (1,322 test games, base over rate: 49.9%)
-- Accuracy: 52.3% | AUC: 0.531 | Brier: 0.2487
-- Best strategy: EV>10% → 108 bets, 9.59% ROI, 57.41% win rate
+- Accuracy: 52.6% | AUC: 0.532 | Brier: 0.2487
+- Best strategy: EV>10% → 57 bets, 23.92% ROI, 64.91% win rate
 
 **Season 2024** (1,484 test games, base over rate: 49.4%)
-- Accuracy: 51.1% | AUC: 0.518 | Brier: 0.2509
-- Best strategy: EV>3% → 298 bets, 3.14% ROI, 54.03% win rate
+- Accuracy: 49.7% | AUC: 0.500 | Brier: 0.2517
+- Best strategy: EV>5% → 127 bets, 6.72% ROI, 55.91% win rate
 
-**Season 2025** (1,326 test games, base over rate: 48.9%)
-- Accuracy: 50.8% | AUC: 0.521 | Brier: 0.2513
-- Best strategy: EV>1% → 595 bets, 3.95% ROI, 54.45% win rate
+**Season 2025** (1,334 test games, base over rate: 49.1%)
+- Accuracy: 51.4% | AUC: 0.519 | Brier: 0.2510
+- Best strategy: EV>10% → 66 bets, 7.02% ROI, 56.06% win rate
 
 #### Walk-Forward Summary (All Seasons Combined)
 
 | EV Threshold | Total Bets | ROI | P/L |
 |--------------|------------|-----|-----|
-| EV > 1% | 1,665 | 2.16% | $359.19 |
-| EV > 3% | 896 | 3.55% | $317.74 |
-| EV > 5% | 625 | 2.63% | $164.24 |
-| EV > 7% | 293 | 2.29% | $67.13 |
-| EV > 10% | 235 | 0.73% | $17.16 |
+| EV > 1% | 1,635 | -2.86% | -$467.12 |
+| EV > 3% | 970 | 0.17% | $16.81 |
+| EV > 5% | 370 | 5.77% | $213.45 |
+| EV > 7% | 237 | 9.55% | $226.24 |
+| EV > 10% | 172 | 10.99% | $189.00 |
+
+#### Under-Only Strategy (All Seasons Combined)
+
+Analysis revealed that the model has a significantly stronger edge on Under bets. When restricting to Under bets only:
+
+| EV Threshold | Total Bets | ROI | P/L |
+|--------------|------------|-----|-----|
+| EV > 1% | 740 | 0.09% | $6.92 |
+| EV > 3% | 487 | 2.70% | $131.58 |
+| EV > 5% | 225 | 7.75% | $174.43 |
+| EV > 7% | 146 | 11.14% | $162.65 |
+| EV > 10% | 103 | 11.20% | $115.40 |
 
 **Key Findings:**
-- The model shows consistent positive ROI across multiple EV thresholds
-- The EV>3% threshold provides the best balance of volume (896 bets) and ROI (3.55%)
-- Win rates consistently exceed 50% at lower EV thresholds, indicating edge over the market
-- The model performs better on Under bets in some seasons (e.g., 2023: 61.82% under win rate at EV>10%)
+- Under bets significantly outperform Over bets: the Under-only strategy improves ROI at every threshold
+- At EV>1%, the Under-only strategy turns a -2.86% loss into breakeven (+0.09%)
+- The EV>7% Under-only threshold provides 11.14% ROI with 146 bets (best risk-adjusted return)
+- Feature importance reveals defensive metrics (SP+ defense, balance) are the most predictive features
+- This suggests the model identifies defensive mismatches that the betting market undervalues
+- The 2023 season showed exceptional Under performance: 67.57% win rate at EV>10%
 
-**Note**: Results assume -110 odds (1.909 payout) and $10 bet size. Confidence intervals are provided for win rates and ROI to account for variance in small sample sizes.
+**Note**: Results assume -110 odds (1.909 payout) and $10 bet size. Results may vary based on when data was fetched from the CFBD API, as the API is continuously updated.
